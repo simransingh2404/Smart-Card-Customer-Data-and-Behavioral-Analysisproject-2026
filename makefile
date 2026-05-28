@@ -7,7 +7,7 @@
 
 CC      := gcc
 cstd    := -std=c11
-CFLAGS  := -Wall -Wextra -Werror
+CFLAGS  := -Wall -Wextra -Werror -D_GNU_SOURCE
 OPTIMISE:= -O2
 INCLUDES:= -Iinclude
 BUILD   := build
@@ -23,7 +23,8 @@ SRC_CORE := \
 	src/lfw_engine.c \
 	src/lfw_packet_parse.c \
 	src/lfw_config.c \
-	src/lfw_state.c
+	src/lfw_state.c \
+	src/lfw_log.c
 
 SRC_DAEMON := \
 	src/main.c \
@@ -52,7 +53,7 @@ pcap-test: $(PCAPTEST)
 $(PCAPTEST): $(PCAP_SRC) $(SRC_CORE) | $(BUILD)
 	$(CC) $(CFLAGS) \
 		$(PCAP_SRC) $(SRC_CORE) \
-		-Iinclude -lpcap \
+		-Iinclude -lpcap -lpthread \
 		-o $(PCAPTEST)
 
 lfw: $(LFWBIN)
@@ -61,7 +62,7 @@ lfw: $(LFWBIN)
 $(LFWBIN): $(SRC_DAEMON) | $(BUILD)
 	$(CC) $(cstd) $(CFLAGS) $(OPTIMISE) $(INCLUDES) \
 		$(SRC_DAEMON) \
-		-lnetfilter_queue \
+		-lnetfilter_queue -lpthread \
 		-o $(LFWBIN)
 
 

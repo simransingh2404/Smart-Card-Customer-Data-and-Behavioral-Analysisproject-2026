@@ -25,4 +25,10 @@ void lfw_state_add(
     const lfw_packet_t *packet
 );
 
+// Clean up expired connections
+void lfw_state_cleanup(lfw_state_t *state);
+
+// Get number of active connections in the table
+lfw_u32 lfw_state_get_count(lfw_state_t *state);
+
 #endif

@@ -1,34 +1,52 @@
-# SAMPLE RULES
-#
-# lfw test rules
-#
+# =====================================================================
+# lfw - Enterprise Firewall Ruleset (lfw.rules)
+# =====================================================================
 # Syntax:
 #   ACTION [PROTO] [PORT] [from SRC] [to DST]
-#   ACTION : allow | deny
-#   PROTO  : any | tcp | udp | icmp
-#   PORT   : number or number/proto (e.g. 22, 22/tcp)
-#   SRC/DST: any or IPv4 address
 #
-#
+#   ACTION  : allow | deny | drop
+#   PROTO   : any | tcp | udp | icmp
+#   PORT    : Port number (matches destination port, e.g. 80, 53)
+#   SRC/DST : any | IPv4 Address (e.g. 1.1.1.1) | CIDR Subnet (e.g. 192.168.1.0/24)
+# =====================================================================
 
-
+# 1. DEFAULT SECURITY POLICY (Fail-Closed Posture)
 default deny
 
-# allow any
 
-# allow any from 127.0.0.1
-# allow any to 127.0.0.1
-# allow tcp 8081 from 127.0.0.1
+# 2. INBOUND MANAGEMENT (SSH)
+# Only permit SSH (port 22) administration from the secure internal management subnet
+allow tcp 22 from 192.168.1.0/24 to any
 
-allow tcp 8081 from 192.168.0.111
 
-allow 8081/tcp from 10.60.76.9
-# allow tcp 8081 from 10.60.76.9
-# allow any to 10.60.76.9
+# 3. OUTBOUND INFRASTRUCTURE SERVICES
+# Allow DNS resolution (port 53 and port 853 DoT) only to trusted secure public DNS resolvers
+allow udp 53 to 1.1.1.1/32
+allow udp 53 to 8.8.8.8/32
+allow tcp 53 to 1.1.1.1/32
+allow tcp 53 to 8.8.8.8/32
+allow tcp 853 to 1.1.1.1/32
+allow tcp 853 to 8.8.8.8/32
 
+# Allow NTP (port 123) for time synchronization with local network pool
+allow udp 123 from any to 10.0.0.0/8
+
+
+# 4. OUTBOUND WEB TRAFFIC (Updates, Packages, APIs)
+# Allow HTTP/HTTPS updates and API communication to any external host
+allow tcp 80 to any
+allow tcp 443 to any
+
+
+# 5. INTERNAL ZONE SEGREGATION (DMZ & Database isolation)
+# Allow the web server subnet (10.0.1.0/24) to connect to the database subnet (10.0.2.0/24) on PostgreSQL (5432)
+allow tcp 5432 from 10.0.1.0/24 to 10.0.2.0/24
+
+# Deny all other cross-zone traffic between database zones and untrusted zones
+deny any from 10.0.2.0/24 to any
+
+
+# 6. DIAGNOSTICS
+# Permit ICMP (ping, trace) within the enterprise network for network debugging
+allow icmp from 10.0.0.0/8 to 10.0.0.0/8
 deny icmp
-
-# allow tcp 8081
-deny tcp 8081
-
-

@@ -25,6 +25,9 @@ typedef struct {
     lfw_l4_ports_t  l4;
 
     bool is_new_connection;
+    bool is_established;
+    lfw_u8       tcp_flags;
+    lfw_u32      length;
 } lfw_packet_t;
 
 #endif

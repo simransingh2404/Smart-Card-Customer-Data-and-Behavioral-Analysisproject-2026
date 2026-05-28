@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <string.h>
+#include "lfw_log.h"
 
 #include "lfw_config.h"
 #include "lfw_engine.h"
@@ -31,7 +33,7 @@ static void remove_iptables_rules()
 
 static void cleanup()
 {
-    printf("[lfw] removing iptables rules...\n");
+    lfw_log_info("removing iptables rules...");
     remove_iptables_rules();
 }
 
@@ -48,6 +50,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "[lfw] run as root\n");
         return 1;
     }
+
+    lfw_log_init(LFW_LOG_SYSLOG);
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -71,17 +75,16 @@ int main(int argc, char **argv)
     );
 
     if (st != LFW_OK) {
-        fprintf(stderr,
-                "[lfw] failed to load config: %s\n",
-                config_path);
+        lfw_log_error("failed to load config: %s", config_path);
+        lfw_log_close();
         return 1;
     }
 
     lfw_state_t *state = lfw_state_create();
     if (!state) {
-        fprintf(stderr,
-                "[lfw] failed to create state table\n");
+        lfw_log_error("failed to create state table");
         free(rules);
+        lfw_log_close();
         return 1;
     }
 
@@ -96,25 +99,38 @@ int main(int argc, char **argv)
         .connection_state = state
     };
 
-    printf("[lfw] inserting iptables rules...\n");
+    if (pthread_rwlock_init(&engine.rules_lock, NULL) != 0) {
+        lfw_log_error("failed to initialize engine rwlock");
+        lfw_state_destroy(state);
+        free(rules);
+        lfw_log_close();
+        return 1;
+    }
+
+    strncpy(engine.config_path, config_path, sizeof(engine.config_path) - 1);
+
+    lfw_log_info("inserting iptables rules...");
     add_iptables_rules();
 
-    printf("[lfw] starting\n");
-    printf("[lfw] config: %s\n", config_path);
-    printf("[lfw] rules: %u\n", rule_count);
-    printf("[lfw] default: %s\n",
-            default_action == LFW_ACTION_ACCEPT ?
-            "ACCEPT" : "DROP");
+    lfw_log_info("daemon starting");
+    lfw_log_info("config: %s, rules: %u, default: %s",
+            config_path,
+            rule_count,
+            default_action == LFW_ACTION_ACCEPT ? "ACCEPT" : "DROP");
 
     st = lfw_nfqueue_run(&engine, 0);
 
+    pthread_rwlock_destroy(&engine.rules_lock);
     lfw_state_destroy(state);
     lfw_config_free_rules(rules);
 
-    if (st != LFW_OK)
+    if (st != LFW_OK) {
+        lfw_log_close();
         return 1;
+    }
 
-    printf("\n[lfw] shutdown complete\n");
+    lfw_log_info("shutdown complete");
+    lfw_log_close();
 
     return 0;
 }

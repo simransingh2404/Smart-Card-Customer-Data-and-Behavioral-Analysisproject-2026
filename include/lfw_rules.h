@@ -14,7 +14,9 @@ typedef enum {
 // Rule match fields
 typedef struct {
     lfw_ipv4_t src_ip;
+    lfw_ipv4_t src_mask;
     lfw_ipv4_t dst_ip;
+    lfw_ipv4_t dst_mask;
     bool       match_src_ip;
     bool       match_dst_ip;
 
@@ -31,6 +33,8 @@ typedef struct {
 typedef struct {
     lfw_rule_match_t match;
     lfw_action_t     action;
+    lfw_u64          hit_count;
+    lfw_u64          byte_count;
 } lfw_rule_t;
 
 // Match API

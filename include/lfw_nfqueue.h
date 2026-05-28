@@ -5,7 +5,7 @@
 
 // Start NFQUEUE loop
 lfw_status_t lfw_nfqueue_run(
-    const lfw_engine_t *engine,
+    lfw_engine_t *engine,
     unsigned int queue_num
 );
 

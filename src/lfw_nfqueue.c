@@ -1,5 +1,6 @@
 #include "lfw_nfqueue.h"
 #include "lfw_packet_parse.h"
+#include "lfw_log.h"
 
 #include <arpa/inet.h>
 #include <linux/netfilter.h>
@@ -10,12 +11,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 
 // Global stop flag for graceful shutdown
 static volatile sig_atomic_t g_running = 1;
+static volatile sig_atomic_t g_reload_requested = 0;
+static volatile sig_atomic_t g_dump_requested = 0;
 
 // ------------------------------
-// Signal handler
+// Signal handlers
 // ------------------------------
 
 static void handle_signal(int sig)
@@ -24,61 +28,16 @@ static void handle_signal(int sig)
     g_running = 0;
 }
 
-// ------------------------------
-// Logging
-// ------------------------------
-
-static void log_packet(const lfw_packet_t *pkt,
-                       lfw_verdict_t verdict)
+static void handle_sighup(int sig)
 {
-    char src_ip[16];
-    char dst_ip[16];
+    (void)sig;
+    g_reload_requested = 1;
+}
 
-    uint32_t src = ntohl(pkt->ip4.src.addr);
-    uint32_t dst = ntohl(pkt->ip4.dst.addr);
-
-    snprintf(src_ip, sizeof(src_ip), "%u.%u.%u.%u",
-            (src >> 24) & 0xFF,
-            (src >> 16) & 0xFF,
-            (src >> 8) & 0xFF,
-            src & 0xFF);
-
-    snprintf(dst_ip, sizeof(dst_ip), "%u.%u.%u.%u",
-            (dst >> 24) & 0xFF,
-            (dst >> 16) & 0xFF,
-            (dst >> 8) & 0xFF,
-            dst & 0xFF);
-
-    const char *proto = "any";
-    if (pkt->protocol == LFW_PROTO_TCP)  proto = "tcp";
-    if (pkt->protocol == LFW_PROTO_UDP)  proto = "udp";
-    if (pkt->protocol == LFW_PROTO_ICMP) proto = "icmp";
-
-    const char *dir = "unknown";
-    if (pkt->direction == LFW_DIR_INBOUND)  dir = "in";
-    if (pkt->direction == LFW_DIR_OUTBOUND) dir = "out";
-
-    const char *verdict_str =
-        (verdict == LFW_VERDICT_ACCEPT) ? "ALLOW" : "DENY";
-
-    unsigned short sport = 0;
-    unsigned short dport = 0;
-
-    if (pkt->protocol == LFW_PROTO_TCP ||
-        pkt->protocol == LFW_PROTO_UDP)
-    {
-        sport = ntohs(pkt->l4.src_port.port);
-        dport = ntohs(pkt->l4.dst_port.port);
-    }
-
-    printf("[lfw] %-5s %-3s %-4s %15s:%-5u -> %15s:%-5u\n",
-           verdict_str,
-           dir,
-           proto,
-           src_ip,
-           sport,
-           dst_ip,
-           dport);
+static void handle_sigusr1(int sig)
+{
+    (void)sig;
+    g_dump_requested = 1;
 }
 
 // ------------------------------
@@ -86,14 +45,13 @@ static void log_packet(const lfw_packet_t *pkt,
 // ------------------------------
 
 static int nfqueue_callback(struct nfq_q_handle *qh,
-                            struct nfgenmsg *nfmsg,
-                            struct nfq_data *nfa,
-                            void *data)
+                             struct nfgenmsg *nfmsg,
+                             struct nfq_data *nfa,
+                             void *data)
 {
     (void)nfmsg;
 
-    const lfw_engine_t *engine =
-        (const lfw_engine_t *)data;
+    lfw_engine_t *engine = (lfw_engine_t *)data;
 
     struct nfqnl_msg_packet_hdr *ph;
     unsigned char *payload = NULL;
@@ -138,7 +96,7 @@ static int nfqueue_callback(struct nfq_q_handle *qh,
 
     verdict = lfw_engine_evaluate(engine, &packet);
 
-    log_packet(&packet, verdict);
+    lfw_log_packet(&packet, verdict);
 
 out:
     return nfq_set_verdict(
@@ -155,7 +113,7 @@ out:
 // ------------------------------
 
 lfw_status_t lfw_nfqueue_run(
-    const lfw_engine_t *engine,
+    lfw_engine_t *engine,
     unsigned int queue_num)
 {
     if (!engine)
@@ -163,6 +121,8 @@ lfw_status_t lfw_nfqueue_run(
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+    signal(SIGHUP, handle_sighup);
+    signal(SIGUSR1, handle_sigusr1);
 
     struct nfq_handle *h = nfq_open();
     if (!h)
@@ -199,13 +159,36 @@ lfw_status_t lfw_nfqueue_run(
     char buf[4096] __attribute__((aligned));
 
     while (g_running) {
+        if (g_reload_requested) {
+            g_reload_requested = 0;
+            lfw_status_t reload_st = lfw_engine_reload_rules(engine);
+            if (reload_st == LFW_OK) {
+                lfw_log_info("Rules configuration reloaded successfully");
+            } else {
+                lfw_log_error("Failed to reload rules configuration");
+            }
+        }
+
+        if (g_dump_requested) {
+            g_dump_requested = 0;
+            lfw_engine_dump_stats(engine);
+        }
 
         int rv = recv(fd, buf, sizeof(buf), 0);
 
-        if (rv > 0)
+        if (rv > 0) {
             nfq_handle_packet(h, buf, rv);
-        else if (rv < 0 && g_running)
+        } else if (rv == 0) {
+            lfw_log_error("nfqueue socket closed");
             break;
+        } else {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (g_running) {
+                break;
+            }
+        }
     }
 
     nfq_destroy_queue(qh);

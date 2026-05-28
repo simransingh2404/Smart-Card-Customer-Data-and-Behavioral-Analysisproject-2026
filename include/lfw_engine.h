@@ -4,6 +4,7 @@
 #include "lfw_types.h"
 #include "lfw_packet.h"
 #include "lfw_rules.h"
+#include <pthread.h>
 
 struct lfw_state;
 
@@ -23,12 +24,20 @@ typedef struct {
     lfw_engine_config_t config;
     lfw_ruleset_t       ruleset;
     struct lfw_state   *connection_state;
+    pthread_rwlock_t    rules_lock;
+    char                config_path[256];
 } lfw_engine_t;
 
-// Evaluate packet
+// Evaluate packet (thread-safe)
 lfw_verdict_t lfw_engine_evaluate(
-    const lfw_engine_t *engine,
-    const lfw_packet_t *packet
+    lfw_engine_t *engine,
+    lfw_packet_t *packet
 );
+
+// Reload rules dynamically from config_path (thread-safe)
+lfw_status_t lfw_engine_reload_rules(lfw_engine_t *engine);
+
+// Dump ruleset hit statistics via syslog (thread-safe)
+void lfw_engine_dump_stats(const lfw_engine_t *engine);
 
 #endif

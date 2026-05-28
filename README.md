@@ -9,9 +9,13 @@
 ## 1. Features
 
 * **NFQUEUE-based daemon**: Intercepts packets from `iptables` and issues ACCEPT or DROP verdicts.
-* **Stateful connection tracking**: Tracks established 5-tuple connections (Source IP, Destination IP, Source Port, Destination Port, Protocol) to bypass rule evaluation for existing sessions.
-* **Human-readable rules**: Simple syntax for managing traffic permissions.
-* **IPv4 Support**: Full support for TCP, UDP, and ICMP over IPv4.
+* **Stateful connection tracking**: Tracks active 5-tuple connections (Source IP, Destination IP, Source Port, Destination Port, Protocol) with a background thread that periodically purges expired connections.
+* **Subnet/CIDR Matching**: Supports bitwise subnet masking for rule definitions (e.g. `/24`, `/16`, or `any`).
+* **Thread-Safe Architecture**: Full concurrency protection utilizing reader-writer locks (`pthread_rwlock_t`) for rules evaluation/reload and mutexes (`pthread_mutex_t`) for connection tracking.
+* **On-the-fly Config Reload (SIGHUP)**: Dynamic reload of rulesets without terminating the daemon or dropping active connection tracking states.
+* **Operational Metrics (SIGUSR1)**: Real-time statistics dump of rule hits, throughput bytes, and connection counts directly to syslog.
+* **Production Logging**: Integration with `syslog` for structured, prioritize-based system logging.
+* **IPv4 Support**: Full support for TCP, UDP, and ICMP.
 
 
 ## 2. Requirements
@@ -83,7 +87,7 @@ ACTION [PROTO] [PORT] [from SRC] [to DST]
 - **ACTION**: `allow` | `deny` (or `drop`)
 - **PROTO**: `any` | `tcp` | `udp` | `icmp` (optional, default: any)
 - **PORT**: integer port (e.g. `22`), or `PORT/PROTO` (e.g. `53/udp`) (optional; matches destination port)
-- **SRC/DST**: `any` or IPv4 address (e.g. `192.168.1.10`)
+- **SRC/DST**: `any`, IPv4 address (e.g. `192.168.1.10`), or CIDR subnet (e.g. `192.168.1.0/24`)
 
 Lines starting with `#` or empty lines are ignored.
 
@@ -93,19 +97,16 @@ Lines starting with `#` or empty lines are ignored.
 # Deny by default
 default deny
 
-# Allow HTTP
-allow tcp 80
+# Allow HTTP from a local subnet
+allow tcp 80 from 192.168.1.0/24
 
-# Allow SSH
+# Allow SSH from any host
 allow tcp 22
 
-# Allow DNS from a specific host
-allow 53/udp from 192.168.1.53
+# Allow DNS from a specific subnet to a public resolver
+allow 53/udp from 10.0.0.0/8 to 8.8.8.8/32
 
-# Allow to specific host or router
-allow any from 192.168.1.1
-
-# Allow ICMP
+# Allow ICMP from anywhere
 allow icmp
 ```
 
@@ -127,7 +128,7 @@ Edit `/etc/lfw/lfw.rules` as needed (see examples above).
 
 ### 5.2 Start the daemon
 
-Run `lfw` as root (or with sufficient capabilities) so it can interact with Netfilter:
+Run `lfw` as root so it can interact with Netfilter:
 
 ```bash
 cd /path/to/lfw
@@ -140,22 +141,50 @@ If you want to use a custom rules file:
 sudo build/lfw /path/to/custom.rules
 ```
 
-While running, `lfw` will log decisions like:
+### 5.3 Syslog logs and signals
 
-```text
-[lfw] ALLOW in  tcp    192.168.0.101:52084 ->   192.168.0.102:8081 
-[lfw] ALLOW out tcp    192.168.0.102:8081  ->   192.168.0.101:52084
+Operational events and logs are sent to the system logger (`syslog`). You can view them using:
+
+```bash
+tail -f /var/log/syslog | grep lfw
+# or using journalctl
+journalctl -t lfw -f
 ```
 
-Stop the daemon with `Ctrl+C`.
+The daemon supports operational control signals:
+
+- **Reload Config**: Reload the rules configuration file dynamically without restarting:
+  ```bash
+  sudo kill -HUP $(pgrep lfw)
+  ```
+- **Dump Statistics**: Output active connections table size, rule hit counts, and byte counters:
+  ```bash
+  sudo kill -USR1 $(pgrep lfw)
+  ```
+
+### 5.4 Systemd Integration
+
+For enterprise integration, you can install the provided systemd service unit:
+
+1. Copy the unit file:
+   ```bash
+   sudo cp lfw.service /etc/systemd/system/lfw.service
+   ```
+2. Enable and start the service:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable lfw
+   sudo systemctl start lfw
+   ```
 
 
 ## 6. Internal Architecture
 
-* **Core Engine**: Orchestrates the lookup process, checking the state table before the rule list.
-* **State Table**: A hash table with 4096 entries used to track active TCP and UDP connections.
-* **Packet Parser**: Extracts L3 and L4 headers from raw NFQUEUE data.
-* **Config Loader**: Parses text-based rule files into memory.
+* **Core Engine**: Orchestrates the lookup process, checking the state table before rules evaluation. Protected by a readers-writer lock (`pthread_rwlock_t`) for thread-safe concurrent lookups.
+* **State Table**: A hash table with 4096 entries used to track active TCP and UDP connections using linear probing with tombstone markers. Protected by a mutex (`pthread_mutex_t`).
+* **Background Housekeeper**: A thread running concurrently that purges expired connection entries every 10 seconds.
+* **Packet Parser**: Extracts L3 and L4 headers from raw NFQUEUE data and records packet sizes.
+* **Config Loader**: Parses text-based rule files into memory, compiling CIDR prefixes to network byte-order masks.
 
 
 ## 7. Quick start (TL;DR)

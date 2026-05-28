@@ -4,6 +4,8 @@
 #include "lfw_engine.h"
 #include "lfw_packet_parse.h"
 #include "lfw_config.h"
+#include "lfw_log.h"
+#include "lfw_state.h"
 
 /*
  * Offline pcap tester for lfw.
@@ -37,6 +39,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    lfw_log_init(LFW_LOG_CONSOLE);
+
     if (argc == 3) {
         config_path = argv[2];
     }
@@ -64,6 +68,14 @@ int main(int argc, char **argv)
         default_action = LFW_ACTION_DROP;
     }
 
+    lfw_state_t *state = lfw_state_create();
+    if (!state) {
+        fprintf(stderr, "failed to create state table\n");
+        if (rules) lfw_config_free_rules(rules);
+        pcap_close(pcap);
+        return 1;
+    }
+
     /* Create engine using the loaded (or fallback) configuration. */
     lfw_engine_t engine = {
         .config = {
@@ -72,25 +84,46 @@ int main(int argc, char **argv)
         .ruleset = {
             .rules = rules,
             .rule_count = rule_count
-        }
+        },
+        .connection_state = state
     };
+
+    if (pthread_rwlock_init(&engine.rules_lock, NULL) != 0) {
+        fprintf(stderr, "failed to initialize engine rwlock\n");
+        lfw_state_destroy(state);
+        if (rules) lfw_config_free_rules(rules);
+        pcap_close(pcap);
+        return 1;
+    }
+    strncpy(engine.config_path, config_path, sizeof(engine.config_path) - 1);
 
     printf("[lfw-pcap] using rules: %s (rules: %u, default: %s)\n",
            config_path,
            engine.ruleset.rule_count,
            (engine.config.default_action == LFW_ACTION_ACCEPT) ? "ACCEPT" : "DROP");
 
+    int linktype = pcap_datalink(pcap);
+    int header_len = 14;
+    if (linktype == DLT_EN10MB) {
+        header_len = 14;
+    } else if (linktype == DLT_LINUX_SLL) {
+        header_len = 16;
+    } else {
+        fprintf(stderr, "[lfw-pcap] Warning: Unknown datalink type %d, assuming Ethernet (14 bytes)\n", linktype);
+        header_len = 14;
+    }
+
     while ((rc = pcap_next_ex(pcap, &hdr, &data)) == 1) {
         lfw_packet_t pkt;
         lfw_status_t st;
 
-        /* Skip Ethernet header (14 bytes) */
-        if (hdr->caplen <= 14)
+        /* Skip link-layer header */
+        if (hdr->caplen <= (unsigned int)header_len)
             continue;
 
         st = lfw_parse_ipv4_packet(
-            data + 14,
-            hdr->caplen - 14,
+            data + header_len,
+            hdr->caplen - header_len,
             LFW_DIR_INBOUND,
             &pkt
         );
@@ -100,15 +133,18 @@ int main(int argc, char **argv)
 
         lfw_verdict_t v = lfw_engine_evaluate(&engine, &pkt);
 
-        printf("packet verdict: %s\n",
-               v == LFW_VERDICT_ACCEPT ? "ACCEPT" : "DROP");
+        lfw_log_packet(&pkt, v);
     }
 
+    pthread_rwlock_destroy(&engine.rules_lock);
+    lfw_state_destroy(state);
     pcap_close(pcap);
 
     if (rules) {
         lfw_config_free_rules(rules);
     }
+
+    lfw_log_close();
 
     return 0;
 }

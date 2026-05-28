@@ -2,13 +2,14 @@
 
 // Match IPv4
 static inline bool match_ip(const lfw_ipv4_t *rule_ip,
+                            const lfw_ipv4_t *rule_mask,
                             const lfw_ipv4_t *pkt_ip,
                             bool enabled)
 {
     if (!enabled)
         return true;
 
-    return rule_ip->addr == pkt_ip->addr;
+    return (pkt_ip->addr & rule_mask->addr) == (rule_ip->addr & rule_mask->addr);
 }
 
 // Match port
@@ -45,11 +46,13 @@ bool lfw_rule_match(const lfw_rule_t *rule,
 
     // IP match
     if (!match_ip(&rule->match.src_ip,
+                &rule->match.src_mask,
                 &packet->ip4.src,
                 rule->match.match_src_ip))
         return false;
 
     if (!match_ip(&rule->match.dst_ip,
+                &rule->match.dst_mask,
                 &packet->ip4.dst,
                 rule->match.match_dst_ip))
         return false;

@@ -38,6 +38,42 @@ static bool parse_ipv4(const char *text, lfw_ipv4_t *out)
     return true;
 }
 
+static bool parse_ipv4_cidr(const char *text, lfw_ipv4_t *ip_out, lfw_ipv4_t *mask_out)
+{
+    if (!text || !ip_out || !mask_out)
+        return false;
+
+    char buf[64];
+    if (strlen(text) >= sizeof(buf))
+        return false;
+    strcpy(buf, text);
+
+    char *slash = strchr(buf, '/');
+    if (!slash) {
+        if (!parse_ipv4(buf, ip_out))
+            return false;
+        mask_out->addr = 0xFFFFFFFFu;
+        return true;
+    }
+
+    *slash = '\0';
+    char *cidr_str = slash + 1;
+
+    if (!parse_ipv4(buf, ip_out))
+        return false;
+
+    char *endptr;
+    long prefix = strtol(cidr_str, &endptr, 10);
+    if (*endptr != '\0' || prefix < 0 || prefix > 32)
+        return false;
+
+    lfw_u32 mask_val = (prefix == 0) ? 0 : (~0u << (32 - prefix));
+    mask_out->addr = htonl(mask_val);
+
+    ip_out->addr &= mask_out->addr;
+    return true;
+}
+
 static bool parse_port_proto(const char *text,
                              lfw_proto_t *proto_inout,
                              lfw_port_t *port_out,
@@ -183,10 +219,12 @@ static lfw_status_t parse_rule_line(char *line,
                 return LFW_ERR_INVALID;
 
             if (strcasecmp(ip, "any") != 0) {
-                if (!parse_ipv4(ip, &rule.match.src_ip))
+                if (!parse_ipv4_cidr(ip, &rule.match.src_ip, &rule.match.src_mask))
                     return LFW_ERR_INVALID;
 
                 rule.match.match_src_ip = true;
+            } else {
+                rule.match.src_mask.addr = 0;
             }
         }
         else if (strcasecmp(tok, "to") == 0) {
@@ -195,10 +233,12 @@ static lfw_status_t parse_rule_line(char *line,
                 return LFW_ERR_INVALID;
 
             if (strcasecmp(ip, "any") != 0) {
-                if (!parse_ipv4(ip, &rule.match.dst_ip))
+                if (!parse_ipv4_cidr(ip, &rule.match.dst_ip, &rule.match.dst_mask))
                     return LFW_ERR_INVALID;
 
                 rule.match.match_dst_ip = true;
+            } else {
+                rule.match.dst_mask.addr = 0;
             }
         }
         else {

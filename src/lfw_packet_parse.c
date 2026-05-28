@@ -29,6 +29,7 @@ lfw_status_t lfw_parse_ipv4_packet(const uint8_t *data,
     memset(out_packet, 0, sizeof(*out_packet));
 
     out_packet->direction = direction;
+    out_packet->length = (lfw_u32)len;
 
     uint8_t proto = data[9];
 
@@ -65,6 +66,7 @@ lfw_status_t lfw_parse_ipv4_packet(const uint8_t *data,
                 return LFW_ERR_INVALID;
 
             uint8_t tcp_flags = data[ip_header_len + 13];
+            out_packet->tcp_flags = tcp_flags;
 
             bool syn = (tcp_flags & 0x02) != 0;
             bool ack = (tcp_flags & 0x10) != 0;
