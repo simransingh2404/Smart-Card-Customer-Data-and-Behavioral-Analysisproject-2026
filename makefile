@@ -13,6 +13,7 @@ INCLUDES:= -Iinclude
 BUILD   := build
 PCAPTEST:= $(BUILD)/lfw_pcap_test
 LFWBIN  := $(BUILD)/lfw
+TESTBIN := $(BUILD)/test_lfw
 
 # ==============================
 # Source files
@@ -28,19 +29,22 @@ SRC_CORE := \
 
 SRC_DAEMON := \
 	src/main.c \
-	src/lfw_nfqueue.c \
+	src/lfw_bpf_loader.c \
+	src/lfw_bpf_sync.c \
 	$(SRC_CORE)
 
 PCAP_SRC := \
 	tools/lfw_pcap_test.c
 
+BPF_OBJ := $(BUILD)/lfw_bpf.o
+
 # ==============================
 # Targets
 # ==============================
 
-.PHONY: all pcap-test lfw clean
+.PHONY: all pcap-test lfw bpf clean test
 
-all: lfw
+all: lfw bpf
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -57,16 +61,33 @@ $(PCAPTEST): $(PCAP_SRC) $(SRC_CORE) | $(BUILD)
 		-o $(PCAPTEST)
 
 lfw: $(LFWBIN)
-	@echo "[lfw] NFQUEUE firewall daemon built successfully"
+	@echo "[lfw] eBPF/TC firewall daemon built successfully"
+
+bpf: $(BPF_OBJ)
+	@echo "[lfw] eBPF kernel program built successfully"
+
+$(BPF_OBJ): src/lfw_bpf.c | $(BUILD)
+	clang -target bpf -O2 -g $(INCLUDES) -I/usr/include/x86_64-linux-gnu \
+		-c src/lfw_bpf.c -o $(BPF_OBJ)
 
 $(LFWBIN): $(SRC_DAEMON) | $(BUILD)
 	$(CC) $(cstd) $(CFLAGS) $(OPTIMISE) $(INCLUDES) \
 		$(SRC_DAEMON) \
-		-lnetfilter_queue -lpthread \
+		-lbpf -lpthread \
 		-o $(LFWBIN)
 
 
 clean:
 	rm -rf $(BUILD)/
 	@echo "[lfw] Build directory cleaned"
+
+test: $(TESTBIN)
+	@echo "[lfw] Unit tests built successfully"
+	./$(TESTBIN)
+
+$(TESTBIN): scratch/test_lfw.c $(SRC_CORE) | $(BUILD)
+	$(CC) $(cstd) $(CFLAGS) $(INCLUDES) \
+		scratch/test_lfw.c $(SRC_CORE) \
+		-lpthread \
+		-o $(TESTBIN)
 

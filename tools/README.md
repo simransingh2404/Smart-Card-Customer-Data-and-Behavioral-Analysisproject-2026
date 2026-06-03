@@ -1,6 +1,6 @@
 ## lfw_pcap_test – Offline lfw tester
 
-`lfw_pcap_test` is a small helper tool that lets you run the **same rule engine and config** as the main `lfw` daemon, but against packets stored in a **pcap file** instead of live NFQUEUE traffic.
+`lfw_pcap_test` is a small helper tool that lets you run the **same rule engine and config** as the main `lfw` daemon, but against packets stored in a **pcap file** instead of live eBPF/TC traffic.
 
 ### Build
 

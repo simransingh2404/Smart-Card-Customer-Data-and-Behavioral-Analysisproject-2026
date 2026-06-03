@@ -3,12 +3,12 @@
 ![Project](https://img.shields.io/badge/lfw-purple.svg)
 ![Language](https://img.shields.io/badge/C11-blue.svg)
 
-`lfw` is a stateful Linux firewall daemon that intercepts packets using the Netfilter NFQUEUE mechanism and evaluates them against a human-readable ruleset.
+`lfw` is a high-performance stateful Linux firewall daemon that intercepts and filters packets in-kernel using eBPF at the Traffic Control (TC) subsystem, evaluating them against a human-readable ruleset.
 
 
 ## 1. Features
 
-* **NFQUEUE-based daemon**: Intercepts packets from `iptables` and issues ACCEPT or DROP verdicts.
+* **eBPF/TC-based filtering**: Intercepts packets in-kernel at the Traffic Control (TC) ingress/egress hooks and issues high-performance ACCEPT or DROP/SHOT verdicts.
 * **Stateful connection tracking**: Tracks active 5-tuple connections (Source IP, Destination IP, Source Port, Destination Port, Protocol) with a background thread that periodically purges expired connections.
 * **Subnet/CIDR Matching**: Supports bitwise subnet masking for rule definitions (e.g. `/24`, `/16`, or `any`).
 * **Thread-Safe Architecture**: Full concurrency protection utilizing reader-writer locks (`pthread_rwlock_t`) for rules evaluation/reload and mutexes (`pthread_mutex_t`) for connection tracking.
@@ -22,14 +22,15 @@
 
 To build and run `lfw`, you need the following:
 
-* **Linux** with `iptables` support.
+* **Linux** kernel supporting eBPF and Traffic Control (TC) clsact.
 * **GCC** with C11 support.
-* **Libraries**: `libnetfilter_queue` and `libpcap` (for the test tool).
+* **Libraries**: `libbpf` and `libpcap` (for the test tool).
+* **Compilers**: `clang` and `llvm` (to compile the eBPF kernel program).
 
 On Debian/Ubuntu:
 
 ```bash
-sudo apt install build-essential libnetfilter-queue-dev libpcap-dev
+sudo apt install build-essential clang llvm libbpf-dev libpcap-dev
 ```
 
 
@@ -128,17 +129,23 @@ Edit `/etc/lfw/lfw.rules` as needed (see examples above).
 
 ### 5.2 Start the daemon
 
-Run `lfw` as root so it can interact with Netfilter:
+Run `lfw` as root and specify the network interface to attach to:
 
 ```bash
 cd /path/to/lfw
-sudo build/lfw
+sudo build/lfw <interface>
+```
+
+For example, to run on the loopback (`lo`) interface or ethernet (`eth0`):
+
+```bash
+sudo build/lfw lo
 ```
 
 If you want to use a custom rules file:
 
 ```bash
-sudo build/lfw /path/to/custom.rules
+sudo build/lfw <interface> /path/to/custom.rules
 ```
 
 ### 5.3 Syslog logs and signals
@@ -164,34 +171,35 @@ The daemon supports operational control signals:
 
 ### 5.4 Systemd Integration
 
-For enterprise integration, you can install the provided systemd service unit:
+For enterprise integration, you can install the provided systemd template service unit to manage the firewall on specific network interfaces:
 
-1. Copy the unit file:
+1. Copy the template unit file:
    ```bash
-   sudo cp lfw.service /etc/systemd/system/lfw.service
+   sudo cp lfw@.service /etc/systemd/system/lfw@.service
    ```
-2. Enable and start the service:
+2. Enable and start the service for a specific network interface (e.g., `eth0`):
    ```bash
    sudo systemctl daemon-reload
-   sudo systemctl enable lfw
-   sudo systemctl start lfw
+   sudo systemctl enable lfw@eth0
+   sudo systemctl start lfw@eth0
    ```
 
 
 ## 6. Internal Architecture
 
-* **Core Engine**: Orchestrates the lookup process, checking the state table before rules evaluation. Protected by a readers-writer lock (`pthread_rwlock_t`) for thread-safe concurrent lookups.
-* **State Table**: A hash table with 4096 entries used to track active TCP and UDP connections using linear probing with tombstone markers. Protected by a mutex (`pthread_mutex_t`).
-* **Background Housekeeper**: A thread running concurrently that purges expired connection entries every 10 seconds.
-* **Packet Parser**: Extracts L3 and L4 headers from raw NFQUEUE data and records packet sizes.
-* **Config Loader**: Parses text-based rule files into memory, compiling CIDR prefixes to network byte-order masks.
+* **eBPF Filter**: Intercepts packets directly in the kernel's TC ingress and egress pipelines, parsing packet headers (L3/L4) and matching them against active rules and connections for sub-microsecond filtering.
+* **State/Conntrack Map**: A BPF Hash Map (`conntrack_map`) with up to 4096 entries to track active TCP and UDP connections.
+* **Rules Map**: A BPF Array Map (`rules_map`) populated by the userspace daemon containing compiled rules.
+* **Config Map**: A BPF Array Map (`config_map`) storing runtime configuration parameters (e.g., default action and rule count).
+* **Background Housekeeper**: A userspace thread that periodically sweeps the `conntrack_map` in the kernel and deletes expired connections.
+* **Config Loader**: Parses text-based rules files in userspace and synchronizes compiled rule structures and policies to the BPF maps.
 
 
 ## 7. Quick start (TL;DR)
 
 ```bash
 # 1) Install dependencies (Debian/Ubuntu/Kali)
-sudo apt install build-essential libnetfilter-queue-dev libpcap-dev
+sudo apt install build-essential clang llvm libbpf-dev libpcap-dev
 
 # 2) Build
 cd /path/to/lfw
@@ -201,9 +209,9 @@ make
 sudo mkdir -p /etc/lfw
 sudo cp lfw.rules /etc/lfw/lfw.rules
 
-# 4) Run the firewall daemon
-sudo build/lfw
+# 4) Run the firewall daemon on a chosen interface (e.g. eth0)
+sudo build/lfw eth0
 ```
 
-After this, your incoming packets that hit the NFQUEUE rule will be filtered according to `lfw.rules`.
+After this, incoming and outgoing packets on the specified interface will be filtered according to `lfw.rules`.
 
