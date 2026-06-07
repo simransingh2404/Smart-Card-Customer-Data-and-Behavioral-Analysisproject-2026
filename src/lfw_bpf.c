@@ -205,6 +205,26 @@ static __attribute__((noinline)) int do_ipv4_filter(struct __sk_buff *skb, struc
                     }
                 }
 
+                if (lfw_proto == IPPROTO_UDP) {
+                    if ((val->state == 0 && src_ip == key.dst_ip) ||
+                        (val->state == 1 && src_ip == key.src_ip)) {
+                        val->state = 2; // Replied
+                        struct lfw_event *event = bpf_ringbuf_reserve(&events_ringbuf, sizeof(struct lfw_event), 0);
+                        if (event) {
+                            event->ip_version = 4;
+                            event->src_ip.v4 = src_ip;
+                            event->dst_ip.v4 = dst_ip;
+                            event->src_port = src_port;
+                            event->dst_port = dst_port;
+                            event->proto = lfw_proto;
+                            event->action = val->action;
+                            event->pkt_len = pkt_len;
+                            event->timestamp = now;
+                            bpf_ringbuf_submit(event, 0);
+                        }
+                    }
+                }
+
                 __u32 act = val->action;
                 if (val->state == LFW_TCP_STATE_CLOSED) {
                     bpf_map_delete_elem(&conntrack_map, &key);
@@ -335,12 +355,18 @@ static __attribute__((noinline)) int do_ipv4_filter(struct __sk_buff *skb, struc
     }
 
     if (decision_action == 1 && (lfw_proto == IPPROTO_TCP || lfw_proto == IPPROTO_UDP)) {
+        __u8 init_state = 0;
+        if (lfw_proto == IPPROTO_TCP) {
+            init_state = LFW_TCP_STATE_SYN_SENT;
+        } else {
+            init_state = (src_ip == key.src_ip) ? 0 : 1;
+        }
         struct conntrack_val new_val = {
             .last_seen = now,
             .bytes     = pkt_len,
             .packets   = 1,
             .action    = 1,
-            .state     = (lfw_proto == IPPROTO_TCP) ? LFW_TCP_STATE_SYN_SENT : 0,
+            .state     = init_state,
         };
         bpf_map_update_elem(&conntrack_map, &key, &new_val, BPF_ANY);
     }
@@ -439,6 +465,26 @@ static __attribute__((noinline)) int do_ipv6_filter(struct __sk_buff *skb, struc
                         val->state = LFW_TCP_STATE_FIN_WAIT;
                     } else if (val->state == LFW_TCP_STATE_FIN_WAIT && (tcp_ack || tcp_fin)) {
                         val->state = LFW_TCP_STATE_CLOSED;
+                    }
+                }
+
+                if (lfw_proto == IPPROTO_UDP) {
+                    if ((val->state == 0 && ip6_cmp(saddr, &key6.dst_ip) == 0) ||
+                        (val->state == 1 && ip6_cmp(saddr, &key6.src_ip) == 0)) {
+                        val->state = 2; // LFW_UDP_STATE_REPLIED
+                        struct lfw_event *event = bpf_ringbuf_reserve(&events_ringbuf, sizeof(struct lfw_event), 0);
+                        if (event) {
+                            event->ip_version = 6;
+                            __builtin_memcpy(&event->src_ip.v6, saddr, sizeof(struct in6_addr));
+                            __builtin_memcpy(&event->dst_ip.v6, daddr, sizeof(struct in6_addr));
+                            event->src_port = src_port;
+                            event->dst_port = dst_port;
+                            event->proto = lfw_proto;
+                            event->action = val->action;
+                            event->pkt_len = pkt_len;
+                            event->timestamp = now;
+                            bpf_ringbuf_submit(event, 0);
+                        }
                     }
                 }
 
@@ -580,12 +626,18 @@ static __attribute__((noinline)) int do_ipv6_filter(struct __sk_buff *skb, struc
     }
 
     if (decision_action == 1 && (lfw_proto == IPPROTO_TCP || lfw_proto == IPPROTO_UDP)) {
+        __u8 init_state = 0;
+        if (lfw_proto == IPPROTO_TCP) {
+            init_state = LFW_TCP_STATE_SYN_SENT;
+        } else {
+            init_state = (ip6_cmp(saddr, &key6.src_ip) == 0) ? 0 : 1;
+        }
         struct conntrack_val new_val = {
             .last_seen = now,
             .bytes     = pkt_len,
             .packets   = 1,
             .action    = 1,
-            .state     = (lfw_proto == IPPROTO_TCP) ? LFW_TCP_STATE_SYN_SENT : 0,
+            .state     = init_state,
         };
         bpf_map_update_elem(&conntrack_map_v6, &key6, &new_val, BPF_ANY);
     }
