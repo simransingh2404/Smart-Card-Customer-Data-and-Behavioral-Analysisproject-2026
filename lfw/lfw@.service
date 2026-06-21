@@ -1,0 +1,13 @@
+[Unit]
+Description=Linux Stateful eBPF/TC Firewall Daemon (lfw) on %I
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lfw %I /etc/lfw/lfw.rules
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+Capabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

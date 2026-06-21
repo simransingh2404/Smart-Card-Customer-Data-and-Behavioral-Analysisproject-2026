@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+
+# Temporary and scratchpad files
+scratch/
+tmp/
+
+# Packet captures
+*.pcap
+*.pcapng

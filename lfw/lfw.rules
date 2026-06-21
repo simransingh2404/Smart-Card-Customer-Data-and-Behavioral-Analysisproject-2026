@@ -1,0 +1,84 @@
+# =====================================================================
+# lfw - Dual-Stack Firewall Ruleset (lfw.rules)
+# =====================================================================
+# Syntax:
+#   ACTION [PROTO] [PORT] [from SRC] [to DST]
+#
+#   ACTION  : allow | deny | drop
+#   PROTO   : any | tcp | udp | icmp | igmp | icmpv6 | esp | ah
+#   PORT    : Port number/range (matches destination port, e.g. 80, 67-68)
+#   SRC/DST : any | IPv4 Address/CIDR | IPv6 Address/CIDR
+# =====================================================================
+
+# DEFAULT SECURITY POLICY (Fail-Closed)
+default deny
+
+# Optional: Completely block an IP version (uncomment to use)
+# Note: These must be placed at the top to take precedence over subsequent rules.
+# deny from 0.0.0.0/0   # Completely block all IPv4 traffic
+# deny from ::/0        # Completely block all IPv6 traffic
+
+# Loopback interface rules (Required for local system health)
+allow tcp from 127.0.0.0/8 to 127.0.0.0/8
+allow udp from 127.0.0.0/8 to 127.0.0.0/8
+allow icmp from 127.0.0.0/8 to 127.0.0.0/8
+allow tcp from ::1 to ::1
+allow udp from ::1 to ::1
+allow icmp from ::1 to ::1
+
+# =====================================================================
+# SECTION 1: BOOTSTRAPPING & LOCAL CONNECTIVITY (IPv4 & IPv6)
+# =====================================================================
+
+# DHCPv4 (UDP Ports 67-68)
+allow udp 67-68
+
+# DHCPv6 (UDP Ports 546-547)
+allow udp 546-547
+
+# NTP (Network Time Protocol - UDP Port 123)
+allow udp 123 to any
+
+# =====================================================================
+# SECTION 2: NETWORK DIAGNOSTICS & SYSTEM DISCOVERY (ICMP / ICMPv6)
+# =====================================================================
+
+# ICMP & ICMPv6 (Ping & Neighbor Discovery)
+allow icmp
+allow icmpv6
+
+# =====================================================================
+# SECTION 3: CORE SERVICES (DNS & WEB SURFING)
+# =====================================================================
+
+# DNS (UDP & TCP Port 53)
+allow udp 53 to any
+allow tcp 53 to any
+
+# DNS over TLS (DoT - TCP Port 853)
+allow tcp 853 to any
+
+# Secure Web Traffic (HTTPS - TCP & UDP Port 443 for HTTP/3 QUIC)
+allow tcp 443 to any
+allow udp 443 to any
+
+# Insecure Web Traffic (HTTP - TCP Port 80)
+allow tcp 80 to any
+
+# =====================================================================
+# SECTION 4: PROFESSIONAL & DEVELOPER TOOLS
+# =====================================================================
+
+# Secure Shell (SSH - TCP Port 22)
+allow tcp 22 to any
+allow tcp 22 from 192.168.0.0/16
+allow tcp 22 from fc00::/7
+
+# Git Protocol (Git - TCP Port 9418)
+allow tcp 9418 to any
+
+# OpenVPN (VPN - UDP Port 1194)
+allow udp 1194 to any
+
+# WireGuard (VPN - UDP Port 51820)
+allow udp 51820 to any

@@ -1,0 +1,35 @@
+#!/bin/bash
+
+INTERFACE=$1
+ACTION=$2
+
+# Ensure we have both arguments
+if [ -z "$INTERFACE" ] || [ -z "$ACTION" ]; then
+    exit 0
+fi
+
+# Automatically enable physical interfaces and loopback if not already configured
+if [ ! -f "/etc/lfw/interfaces.enabled/${INTERFACE}" ]; then
+    if [ -d "/sys/class/net/${INTERFACE}/device" ] || [ "${INTERFACE}" = "lo" ]; then
+        touch "/etc/lfw/interfaces.enabled/${INTERFACE}"
+    fi
+fi
+
+# Only manage interfaces that have a corresponding file in /etc/lfw/interfaces.enabled/
+if [ -f "/etc/lfw/interfaces.enabled/${INTERFACE}" ]; then
+    case "$ACTION" in
+        pre-up)
+            # Restart to ensure a clean state and recreate BPF/TC attachment after MAC randomization
+            systemctl restart "lfw@${INTERFACE}"
+            ;;
+        up)
+            # If the service is not already active, start it (for interfaces that don't trigger pre-up, like lo)
+            if ! systemctl is-active --quiet "lfw@${INTERFACE}"; then
+                systemctl start "lfw@${INTERFACE}"
+            fi
+            ;;
+        down)
+            systemctl stop "lfw@${INTERFACE}"
+            ;;
+    esac
+fi
